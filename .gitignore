@@ -1,0 +1,21 @@
+# Bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build artefacts
+build/
+dist/
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# PyInstaller cache
+*.spec~
+*.manifest
