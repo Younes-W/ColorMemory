@@ -46,6 +46,3 @@ src/             # Python-Quellcode
 abgabe.spec      # PyInstaller-Konfiguration für den App-Build
 requirements.txt # Python-Abhängigkeiten
 ```
-
-## Lizenz
-Wähle beim Erstellen deines GitHub-Repositories eine passende Lizenz (z. B. MIT, Apache 2.0 oder GPL) und ergänze sie hier.
