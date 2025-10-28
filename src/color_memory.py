@@ -1,110 +1,35 @@
-import importlib
-import math
 import os
-import platform
-import random
-import re
-import shutil
-import subprocess
-import threading
-import time
-import sys
-from contextlib import suppress
-from typing import Callable, Optional
+from typing import Optional
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
+
+from animations import BackgroundAnimator, FeedbackAnimator, WordAnimator
+from audio import MusicController, play_feedback_sound
+from config import (
+    ACCENT_BLUE,
+    ACTIVE_COLORS,
+    CARD_BG,
+    FEEDBACK_BASE,
+    LOGO_PATH,
+    MUSIC_PATH,
+    NEUTRAL_BG,
+    NEUTRAL_BG_ALT,
+    START_DELAY_MS,
+    TEXT_MUTED,
+    TEXT_PRIMARY,
+    TIME_COLOR,
+)
+from game import ColorMemoryEngine
+from utils import darker_color, hex_to_rgb
 
 os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
-playsound_func: Optional[Callable[[str], None]] = None
-with suppress(Exception):  # pragma: no cover - optional dependency
-    module = importlib.import_module("playsound")
-    playsound_func = getattr(module, "playsound")
-
-
-def resource_path(*relative_parts: str, create_parent: bool = False) -> str:
-    """Return absolute path to a project resource, supporting PyInstaller bundles."""
-    if not relative_parts:
-        raise ValueError("resource_path expects at least one relative path component.")
-
-    relative_path = os.path.join(*relative_parts)
-    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    candidate = os.path.join(base_path, relative_path)
-
-    if os.path.exists(candidate):
-        if create_parent:
-            os.makedirs(os.path.dirname(candidate), exist_ok=True)
-        return candidate
-
-    base_dir_name = os.path.basename(base_path.rstrip(os.sep))
-    if base_dir_name == "src":
-        project_root = os.path.dirname(base_path)
-        fallback = os.path.join(project_root, relative_path)
-        if os.path.exists(fallback) or create_parent:
-            if create_parent:
-                os.makedirs(os.path.dirname(fallback), exist_ok=True)
-            return fallback
-
-    if create_parent:
-        os.makedirs(os.path.dirname(candidate), exist_ok=True)
-    return candidate
-
-
-def hex_to_rgb(color: str) -> tuple[int, int, int]:
-    color = color.lstrip("#")
-    return tuple(int(color[i : i + 2], 16) for i in range(0, 6, 2))
-
-
-def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
-    return "#{:02x}{:02x}{:02x}".format(*rgb)
-
-
-def blend_hex_colors(start: str, end: str, t: float) -> str:
-    sr, sg, sb = hex_to_rgb(start)
-    er, eg, eb = hex_to_rgb(end)
-    r = int(sr + (er - sr) * t)
-    g = int(sg + (eg - sg) * t)
-    b = int(sb + (eb - sb) * t)
-    return rgb_to_hex((r, g, b))
-
-
-NEUTRAL_BG = "#f6f4ff"
-NEUTRAL_BG_ALT = "#ece8ff"
-HEADER_BG = "#ffffff"
-ACCENT_BLUE = "#6258f5"
-TIME_COLOR = "#f76a3e"
-FEEDBACK_BASE = "#4b4a6a"
-ENTRY_BG = "#ffffff"
-ENTRY_TEXT = "#1f1f1f"
-TEXT_PRIMARY = "#1f1f1f"
-TEXT_MUTED = "#6a7090"
-CARD_BG = "#f3efff"
-START_DELAY_MS = 800
-LOGO_PATH = resource_path("assets", "logo.png")
-MUSIC_PATH = resource_path("assets", "music.wav")
-HIGHSCORE_PATH = resource_path("data", "highscore.txt", create_parent=True)
-
-
-COLOR_MAP = {
-    "Rot": "#ff9aa0",
-    "Blau": "#8bbcff",
-    "Grün": "#8be2c0",
-    "Gelb": "#ffe7a3",
-    "Orange": "#ffc39c",
-    "Lila": "#cab3ff",
-    "Pink": "#ffb0dc",
-    "Braun": "#cba786",
-    "Schwarz": "#5a5f73",
-    "Weiß": "#e6e9f6",
-    "Grau": "#a2b3d4",
-}
-
 
 class ColorMemoryGame:
-    """Modernised Color Memory UI powered by CustomTkinter (logic unchanged)."""
+    """Modernised Color Memory UI powered by CustomTkinter with modular helpers."""
 
     def __init__(self, root: ctk.CTk) -> None:
         self.root = root
@@ -113,38 +38,21 @@ class ColorMemoryGame:
         self.root.minsize(760, 620)
         self.root.configure(fg_color=NEUTRAL_BG)
 
-        # Gameplay state
-        self.sequence: list[str] = []
-        self.round: int = 0
-        self.remaining_time: float = 0.0
-        self.timer_id: str | None = None
-        self.game_active: bool = False
-        self.feedback_color_animation_id: str | None = None
-        self.feedback_pulse_animation_id: str | None = None
-        self.word_fade_id: str | None = None
-        self.hide_word_id: str | None = None
-
-        # Highscore persistence
-        self.highscore_path = HIGHSCORE_PATH
-        if not os.path.exists(self.highscore_path):
-            with suppress(OSError):
-                with open(self.highscore_path, "w", encoding="utf-8") as file:
-                    file.write("0")
-        self.highscore: int = self._load_highscore()
-
-        # Background animation palette
-        self.bg_palette = (NEUTRAL_BG, NEUTRAL_BG_ALT)
-        self.bg_anim_theta = 0.0
-
-        # Music control
-        self.music_thread: threading.Thread | None = None
-        self.music_stop_event = threading.Event()
-        self.music_file = MUSIC_PATH
-        self.music_mode: Optional[str] = None
-        self.music_process: Optional[subprocess.Popen] = None
-
-        # Timer toggle variable
+        self.engine = ColorMemoryEngine(allowed_words=ACTIVE_COLORS)
         self.timer_enabled = ctk.BooleanVar(value=True)
+        self.remaining_time: float = 0.0
+        self.timer_id: Optional[str] = None
+        self.game_active: bool = False
+        self.player_sequence: list[str] = []
+        self.color_buttons: dict[str, ctk.CTkButton] = {}
+        self.enable_buttons_id: Optional[str] = None
+
+        self.feedback_animator: Optional[FeedbackAnimator] = None
+        self.background_animator: Optional[BackgroundAnimator] = None
+        self.word_animator: Optional[WordAnimator] = None
+        self.music_controller: Optional[MusicController] = None
+
+        self.bg_palette = (NEUTRAL_BG, NEUTRAL_BG_ALT)
 
         self.logo_source: Optional[Image.Image] = None
         self.logo_icon_photo: Optional[ImageTk.PhotoImage] = None
@@ -163,7 +71,6 @@ class ColorMemoryGame:
             self.logo_icon_photo = ImageTk.PhotoImage(icon_bitmap)
             self.root.iconphoto(True, self.logo_icon_photo)
 
-            # Determine a display size while respecting aspect ratio
             target_width = 360
             target_height = 180
             scale = target_width / original_width if original_width else 1.0
@@ -175,15 +82,20 @@ class ColorMemoryGame:
             self.logo_display_size = (display_width, display_height)
 
         self._build_ui()
+        self.music_controller = MusicController(
+            root=self.root,
+            music_file=MUSIC_PATH,
+            notify=self._show_feedback,
+        )
         self._update_score_label(0)
-        self._animate_background()
+        if self.background_animator:
+            self.background_animator.start()
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
         """Create the complete customtkinter interface."""
 
-        # -- Header ---------------------------------------------------------
         self.header_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         self.header_frame.pack(fill="x", padx=20, pady=(16, 12))
 
@@ -215,7 +127,6 @@ class ColorMemoryGame:
             text_holder = ctk.CTkFrame(title_container, fg_color="transparent")
             text_holder.pack(expand=True, fill="x")
 
-            # Subtle drop-shadow effect for the fallback title text
             self.title_shadow = ctk.CTkLabel(
                 text_holder,
                 text="🎨 Color Memory",
@@ -251,7 +162,6 @@ class ColorMemoryGame:
         )
         self.time_label.pack(side="right")
 
-        # -- Body -----------------------------------------------------------
         self.body_frame = ctk.CTkFrame(self.root, fg_color=NEUTRAL_BG, corner_radius=18)
         self.body_frame.pack(fill="both", expand=True, padx=20, pady=(0, 18))
 
@@ -276,7 +186,6 @@ class ColorMemoryGame:
         )
         self.word_label.pack(expand=True)
 
-        # -- Controls -------------------------------------------------------
         self.controls_frame = ctk.CTkFrame(self.body_frame, fg_color="transparent")
         self.controls_frame.pack(fill="x", pady=(0, 18))
 
@@ -339,49 +248,53 @@ class ColorMemoryGame:
         )
         self.reset_button.pack(side="left", padx=(24, 0))
 
-        # -- Entry ----------------------------------------------------------
-        self.entry_frame = ctk.CTkFrame(self.body_frame, fg_color="transparent")
-        self.entry_frame.pack(fill="x")
+        self.selection_frame = ctk.CTkFrame(self.body_frame, fg_color="transparent")
+        self.selection_frame.pack(fill="x")
 
-        self.entry_hint_label = ctk.CTkLabel(
-            self.entry_frame,
-            text='Sequenz eingeben (z. B. "Blau, Grün"):',
+        self.selection_hint_label = ctk.CTkLabel(
+            self.selection_frame,
+            text="Sequenz durch Tippen auf Farbfelder wiederholen:",
             font=ctk.CTkFont("Helvetica", 15),
             text_color=TEXT_MUTED,
         )
-        self.entry_hint_label.pack(anchor="w", pady=(4, 6))
+        self.selection_hint_label.pack(anchor="w", pady=(4, 10))
 
-        self.input_var = ctk.StringVar()
-        self.entry = ctk.CTkEntry(
-            self.entry_frame,
-            textvariable=self.input_var,
-            font=ctk.CTkFont("Helvetica", 20),
-            fg_color=ENTRY_BG,
-            text_color=ENTRY_TEXT,
-            border_color="#c5cdea",
-            border_width=2,
-            corner_radius=14,
-            height=44,
-        )
-        self.entry.pack(fill="x")
-        self.entry.configure(state="disabled")
-        self.entry.bind("<Return>", lambda _event: self.submit_guess())
+        self.buttons_container = ctk.CTkFrame(self.selection_frame, fg_color="transparent")
+        self.buttons_container.pack()
 
-        self.submit_button = ctk.CTkButton(
-            self.entry_frame,
-            text="Überprüfen",
-            command=self.submit_guess,
-            fg_color="#8ea1ff",
-            hover_color="#7b90ff",
-            text_color="#1f2233",
-            text_color_disabled="#555977",
-            corner_radius=18,
-            height=44,
-            width=140,
-            font=ctk.CTkFont("Helvetica", 16, "bold"),
+        button_font = ctk.CTkFont("Helvetica", 16, "bold")
+        for index, color_name in enumerate(self.engine.active_words):
+            hex_code = CARD_BG
+            if color_name in self.engine.color_map:
+                hex_code = self.engine.color_map[color_name]
+            hover = darker_color(hex_code, 0.85)
+            text_color = self._ideal_text_color(hex_code)
+            button = ctk.CTkButton(
+                self.buttons_container,
+                text=color_name,
+                command=lambda name=color_name: self._on_color_selected(name),
+                fg_color=hex_code,
+                hover_color=hover,
+                text_color=text_color,
+                corner_radius=18,
+                height=48,
+                width=130,
+                font=button_font,
+                border_width=0,
+            )
+            button.grid(row=index // 3, column=index % 3, padx=10, pady=8, sticky="ew")
+            self.color_buttons[color_name] = button
+
+        for column in range(3):
+            self.buttons_container.grid_columnconfigure(column, weight=1)
+
+        self.selection_status_label = ctk.CTkLabel(
+            self.selection_frame,
+            text="Auswahl: —",
+            font=ctk.CTkFont("Helvetica", 14, "bold"),
+            text_color=TEXT_MUTED,
         )
-        self.submit_button.pack(pady=(14, 4))
-        self.submit_button.configure(state="disabled")
+        self.selection_status_label.pack(pady=(10, 4))
 
         self.feedback_font = ctk.CTkFont("Helvetica", 20, "bold")
         self.feedback_label = ctk.CTkLabel(
@@ -399,6 +312,29 @@ class ColorMemoryGame:
             text_color="#6b7adb",
         )
         self.authors_label.pack(pady=(18, 0))
+
+        # Instantiate helpers now that widgets exist
+        self.feedback_animator = FeedbackAnimator(
+            root=self.root,
+            label=self.feedback_label,
+            font=self.feedback_font,
+            base_color=FEEDBACK_BASE,
+            base_size=self.feedback_font.cget("size"),
+        )
+        self.word_animator = WordAnimator(
+            root=self.root,
+            container=self.word_container,
+            label=self.word_label,
+            adjust_font=self._adjust_word_font,
+            base_bg=CARD_BG,
+            base_text_color=TEXT_PRIMARY,
+        )
+        self.background_animator = BackgroundAnimator(
+            root=self.root,
+            palette=self.bg_palette,
+            on_color=self._apply_background_color,
+        )
+        self._set_color_buttons_state("disabled")
 
     # ------------------------------------------------------------------#
     # Gameplay flow (logic preserved – only UI calls adjusted)
@@ -419,17 +355,18 @@ class ColorMemoryGame:
 
     def _initialize_game_state(self) -> None:
         self.cancel_timer()
-        self._cancel_feedback_animations()
-        self._cancel_word_fade()
-        self._cancel_word_hide()
-        self.sequence = []
-        self.round = 0
+        if self.feedback_animator:
+            self.feedback_animator.cancel_all()
+        if self.word_animator:
+            self.word_animator.cancel_all()
+        self.engine.reset()
+        self.remaining_time = 0.0
         self.game_active = True
+        self.player_sequence = []
+        self.selection_status_label.configure(text="Auswahl: —", text_color=TEXT_MUTED)
 
         self.start_button.configure(state="disabled")
-        self.entry.configure(state="normal")
-        self.submit_button.configure(state="normal")
-        self.input_var.set("")
+        self._set_color_buttons_state("disabled")
 
         self._show_feedback("Merke dir das Wort!", "#5164d8")
         self.word_container.configure(fg_color=CARD_BG)
@@ -438,65 +375,81 @@ class ColorMemoryGame:
 
         self._update_score_label(0)
         self._update_time_label(0.0 if self.timer_enabled.get() else None)
-        self.entry.focus_set()
 
     def next_round(self) -> None:
         if not self.game_active:
             return
 
-        self.round += 1
+        round_data = self.engine.prepare_next_round()
+        word = str(round_data["word"])
+        text_color = str(round_data["text_color"])
+        background_color = str(round_data["background_color"])
+        self.remaining_time = float(round_data["time_budget"])
+        self.player_sequence = []
+        self.selection_status_label.configure(text="Auswahl: —", text_color=TEXT_MUTED)
+
         self._update_score_label()
 
-        word = random.choice(list(COLOR_MAP.keys()))
-        self.sequence.append(word)
-
-        text_color = random.choice([code for code in COLOR_MAP.values() if code != COLOR_MAP[word]])
-        bg_color = self._darker_color(text_color)
-
-        self._cancel_word_hide()
+        if self.word_animator:
+            self.word_animator.cancel_all()
+            self.word_animator.remember_word_style(text_color=text_color, container_color=CARD_BG)
         self.word_container.configure(fg_color=CARD_BG)
         self.word_label.configure(text=word, text_color=text_color, fg_color=CARD_BG)
-        self.word_label._last_word_color = text_color  # store for conceal stage
-        self.word_container._last_word_bg = self.word_container.cget("fg_color")
         self._adjust_word_font(text=word)
-        self._fade_word_container(bg_color)
 
-        # Hide the word after a short interval to force memorisation
-        self.hide_word_id = self.root.after(1200, self._conceal_word)
+        if self.word_animator:
+            self.word_animator.fade_to(CARD_BG, background_color)
+            self.word_animator.schedule_conceal(1200)
+        self._set_color_buttons_state("disabled")
+        self._schedule_button_enable(1200)
 
-        self.input_var.set("")
-        self.entry.focus_set()
         self._clear_feedback()
 
-        self.remaining_time = float(self.round * 3)
         self.cancel_timer()
         if self.timer_enabled.get():
             self.update_timer()
         else:
             self._update_time_label(None)
-        self._start_music()
 
-    def submit_guess(self) -> None:
+        if self.music_controller:
+            self.music_controller.start()
+
+    def _on_color_selected(self, color_name: str) -> None:
         if not self.game_active:
             return
 
-        guess = self.input_var.get().strip()
-        if not guess:
-            self._show_feedback("Bitte gib die Sequenz ein.", "#d48b1f")
+        self.player_sequence.append(color_name)
+        self.selection_status_label.configure(
+            text="Auswahl: " + " · ".join(self.player_sequence),
+            text_color=ACCENT_BLUE,
+        )
+        self._flash_color_button(color_name)
+
+        expected = self.engine.sequence
+        index = len(self.player_sequence) - 1
+
+        if index >= len(expected):
+            self.cancel_timer()
+            self._cancel_button_enable()
+            self._handle_failure()
             return
 
-        parts = [segment.strip() for segment in re.split(r"[,;\s]+", guess) if segment.strip()]
-        guessed_words = [word.casefold() for word in parts]
-        expected_words = [word.casefold() for word in self.sequence]
-
-        self.cancel_timer()
-
-        if guessed_words == expected_words:
-            self._play_sound("success")
-            self._show_feedback("Richtig!", "#2f8c68")
-            self.root.after(600, self.next_round)
-        else:
+        if self.player_sequence[index].casefold() != expected[index].casefold():
+            self.cancel_timer()
+            self._cancel_button_enable()
             self._handle_failure()
+            return
+
+        if len(self.player_sequence) == len(expected):
+            self.cancel_timer()
+            self._cancel_button_enable()
+            self.engine.register_success()
+            play_feedback_sound("success", bell=self.root.bell)
+            self._show_feedback("Richtig!", "#2f8c68")
+            self._update_score_label()
+            self.selection_status_label.configure(text="Auswahl: ✓", text_color="#2f8c68")
+            self._set_color_buttons_state("disabled")
+            self.root.after(600, self.next_round)
 
     def update_timer(self) -> None:
         if not self.game_active or not self.timer_enabled.get():
@@ -512,24 +465,22 @@ class ColorMemoryGame:
         self.timer_id = self.root.after(100, self.update_timer)
 
     def _handle_failure(self) -> None:
-        score = max(0, self.round - 1)
-        self._play_sound("failure")
-        new_highscore = score > self.highscore
+        score, new_highscore, solution = self.engine.register_failure()
+        play_feedback_sound("failure", bell=self.root.bell)
         message = f"Falsch! Runde {score} geschafft."
         if new_highscore:
-            self.highscore = score
-            self._save_highscore(score)
             message += " Neuer Highscore!"
         self._show_feedback(message, "#c34d5e")
-        self._music_cleanup()
+        if self.music_controller:
+            self.music_controller.stop(with_feedback=False)
         self._update_score_label(score)
-        solution_text = "Lösung: " + " → ".join(self.sequence)
+        self.selection_status_label.configure(text="Auswahl: ✗", text_color="#c34d5e")
         self._handle_stop(
             label_text="Game Over",
             label_color="#c34d5e",
             cleanup_music=False,
             reset_progress=False,
-            solution=solution_text,
+            solution="Lösung: " + solution,
         )
 
     def _handle_stop(
@@ -541,16 +492,16 @@ class ColorMemoryGame:
         reset_progress: bool = True,
         solution: str | None = None,
     ) -> None:
-        if cleanup_music:
-            self._music_cleanup()
-        self._cancel_word_hide()
+        if cleanup_music and self.music_controller:
+            self.music_controller.cleanup()
+        if self.word_animator:
+            self.word_animator.cancel_all()
         self.cancel_timer()
+        self._cancel_button_enable()
         self.game_active = False
         if reset_progress:
-            self.sequence = []
-            self.round = 0
-        self.entry.configure(state="disabled")
-        self.submit_button.configure(state="disabled")
+            self.engine.reset()
+        self._set_color_buttons_state("disabled")
         self.start_button.configure(state="normal")
         self.remaining_time = 0.0
         self._update_time_label(self.remaining_time if self.timer_enabled.get() else None)
@@ -561,6 +512,8 @@ class ColorMemoryGame:
             self._adjust_word_font(text=solution)
         if reset_progress:
             self._update_score_label(0)
+            self.selection_status_label.configure(text="Auswahl: —", text_color=TEXT_MUTED)
+        self.player_sequence = []
 
     def cancel_timer(self) -> None:
         if self.timer_id is not None:
@@ -569,8 +522,8 @@ class ColorMemoryGame:
 
     def _update_score_label(self, current: int | None = None) -> None:
         if current is None:
-            current = self.round
-        self.score_label.configure(text=f"Runde: {current} · Best: {self.highscore}")
+            current = self.engine.round
+        self.score_label.configure(text=f"Runde: {current} · Best: {self.engine.highscore}")
 
     def _update_time_label(self, seconds: float | None) -> None:
         if seconds is None:
@@ -592,206 +545,58 @@ class ColorMemoryGame:
         self.cancel_timer()
         if enabled:
             if self.remaining_time <= 0:
-                self.remaining_time = float(self.round * 2)
+                self.remaining_time = float(max(1, self.engine.round) * 2)
             self.update_timer()
         else:
             self._update_time_label(None)
 
     # ------------------------------------------------------------------#
-    # Music handling (unchanged behaviour, modernised feedback)
-    # ------------------------------------------------------------------#
-
-    def _start_music(self) -> None:
-        if self.music_thread and self.music_thread.is_alive():
-            return
-        if not os.path.exists(self.music_file):
-            self._show_feedback("Keine Musikdatei gefunden.", "#c67b1e")
-            return
-
-        system = platform.system()
-        can_use_afplay = system == "Darwin" and shutil.which("afplay") is not None
-
-        self.music_stop_event.clear()
-
-        if can_use_afplay:
-            self.music_mode = "afplay"
-            self.music_thread = threading.Thread(
-                target=self._music_loop,
-                args=("afplay",),
-                daemon=True,
-            )
-            self.music_thread.start()
-            return
-
-        if playsound_func is not None:
-            self.music_mode = "playsound"
-            self.music_thread = threading.Thread(
-                target=self._music_loop,
-                args=("playsound",),
-                daemon=True,
-            )
-            self.music_thread.start()
-            return
-
-        self._show_feedback("Musik nicht verfügbar.", "#c67b1e")
-
-    def _stop_music(self, with_feedback: bool = True) -> None:
-        self.music_stop_event.set()
-        if self.music_mode == "afplay" and self.music_process is not None:
-            try:
-                self.music_process.terminate()
-            except Exception:
-                pass
-        self.music_mode = None
-        if with_feedback:
-            self._show_feedback("Musik gestoppt.", "#4b58c2")
-
-    def _music_loop(self, mode: str) -> None:
-        error_message: Optional[str] = None
-
-        if mode == "playsound":
-            while not self.music_stop_event.is_set():
-                try:
-                    playsound_func(self.music_file)  # type: ignore[arg-type]
-                except FileNotFoundError:
-                    error_message = "Keine Musikdatei gefunden."
-                    break
-                except Exception:
-                    error_message = "Musikwiedergabe fehlgeschlagen."
-                    break
-
-        elif mode == "afplay":
-            while not self.music_stop_event.is_set():
-                try:
-                    self.music_process = subprocess.Popen(
-                        ["afplay", "-v", "0.3", self.music_file],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                except FileNotFoundError:
-                    error_message = "afplay nicht gefunden."
-                    break
-                except Exception:
-                    error_message = "Musikwiedergabe fehlgeschlagen."
-                    break
-
-                while not self.music_stop_event.is_set():
-                    if self.music_process.poll() is not None:
-                        break
-                    time.sleep(0.1)
-
-                if self.music_stop_event.is_set() and self.music_process.poll() is None:
-                    try:
-                        self.music_process.terminate()
-                    except Exception:
-                        pass
-                    break
-
-            self.music_process = None
-
-        self.root.after(0, lambda: self._finalize_music_loop(error_message))
-
-    def _finalize_music_loop(self, error_message: Optional[str]) -> None:
-        self.music_thread = None
-        self.music_process = None
-        self.music_mode = None
-        if error_message:
-            self._show_feedback(error_message, "#c67b1e")
-        elif not self.music_stop_event.is_set():
-            self._show_feedback("Musik beendet.", "#4b58c2")
-
-    # ------------------------------------------------------------------#
     # Feedback & animation helpers
     # ------------------------------------------------------------------#
 
-    def _show_feedback(self, message: str, target_color: str) -> None:
-        self.feedback_label.configure(text=message)
-        self._animate_feedback_color(self.feedback_label.cget("text_color"), target_color)
-        self._pulse_feedback()
+    def _set_color_buttons_state(self, state: str) -> None:
+        for button in self.color_buttons.values():
+            button.configure(state=state)
 
-    def _clear_feedback(self) -> None:
-        self._cancel_feedback_animations()
-        self.feedback_label.configure(text="", text_color=FEEDBACK_BASE)
-
-    def _animate_feedback_color(
-        self,
-        start_color: str,
-        end_color: str,
-        steps: int = 12,
-        interval: int = 45,
-    ) -> None:
-        self._cancel_feedback_color_animation()
-
-        try:
-            start_rgb = hex_to_rgb(start_color)
-        except ValueError:
-            start_rgb = hex_to_rgb(FEEDBACK_BASE)
-        end_rgb = hex_to_rgb(end_color)
-
-        def step_animation(step: int = 0) -> None:
-            t = min(1.0, step / steps)
-            current = tuple(
-                int(start_rgb[i] + (end_rgb[i] - start_rgb[i]) * t) for i in range(3)
-            )
-            self.feedback_label.configure(text_color=rgb_to_hex(current))
-            if step < steps:
-                self.feedback_color_animation_id = self.root.after(
-                    interval,
-                    lambda: step_animation(step + 1),
-                )
-            else:
-                self.feedback_color_animation_id = None
-
-        step_animation()
-
-    def _pulse_feedback(self, amplitude: int = 4, steps: int = 8, interval: int = 35) -> None:
-        self._cancel_feedback_pulse_animation()
-        base_size = 20
-
-        def pulse(step: int = 0) -> None:
-            t = step / steps
-            size = base_size + int(amplitude * math.sin(math.pi * t))
-            self.feedback_font.configure(size=size)
-            if step < steps:
-                self.feedback_pulse_animation_id = self.root.after(
-                    interval,
-                    lambda: pulse(step + 1),
-                )
-            else:
-                self.feedback_font.configure(size=base_size)
-                self.feedback_pulse_animation_id = None
-
-        pulse()
-
-    def _cancel_feedback_color_animation(self) -> None:
-        if self.feedback_color_animation_id is not None:
-            self.root.after_cancel(self.feedback_color_animation_id)
-            self.feedback_color_animation_id = None
-
-    def _cancel_feedback_pulse_animation(self) -> None:
-        if self.feedback_pulse_animation_id is not None:
-            self.root.after_cancel(self.feedback_pulse_animation_id)
-            self.feedback_pulse_animation_id = None
-            self.feedback_font.configure(size=20)
-
-    def _cancel_feedback_animations(self) -> None:
-        self._cancel_feedback_color_animation()
-        self._cancel_feedback_pulse_animation()
-
-    def _cancel_word_hide(self) -> None:
-        if self.hide_word_id is not None:
-            self.root.after_cancel(self.hide_word_id)
-            self.hide_word_id = None
-
-    def _conceal_word(self) -> None:
-        self.hide_word_id = None
+    def _enable_color_buttons(self) -> None:
+        self.enable_buttons_id = None
         if not self.game_active:
             return
-        last_color = getattr(self.word_label, "_last_word_color", TEXT_PRIMARY)
-        last_bg = getattr(self.word_container, "_last_word_bg", CARD_BG)
-        self.word_container.configure(fg_color=last_bg)
-        self.word_label.configure(text="?", text_color=last_color, fg_color=last_bg)
-        self._adjust_word_font(text="?")
+        self._set_color_buttons_state("normal")
+
+    def _schedule_button_enable(self, delay_ms: int) -> None:
+        self._cancel_button_enable()
+        self.enable_buttons_id = self.root.after(delay_ms, self._enable_color_buttons)
+
+    def _cancel_button_enable(self) -> None:
+        if self.enable_buttons_id is not None:
+            self.root.after_cancel(self.enable_buttons_id)
+            self.enable_buttons_id = None
+
+    def _flash_color_button(self, color_name: str, duration: int = 220) -> None:
+        button = self.color_buttons.get(color_name)
+        if button is None:
+            return
+        button.configure(border_width=3, border_color=ACCENT_BLUE)
+
+        def reset_border() -> None:
+            button.configure(border_width=0)
+
+        self.root.after(duration, reset_border)
+
+    def _show_feedback(self, message: str, target_color: str) -> None:
+        self.feedback_label.configure(text=message)
+        current_color = self.feedback_label.cget("text_color")
+        if self.feedback_animator:
+            self.feedback_animator.animate_color(current_color, target_color)
+            self.feedback_animator.pulse()
+        else:
+            self.feedback_label.configure(text_color=target_color)
+
+    def _clear_feedback(self) -> None:
+        if self.feedback_animator:
+            self.feedback_animator.cancel_all()
+        self.feedback_label.configure(text="", text_color=FEEDBACK_BASE)
 
     def _adjust_word_font(self, text: str | None = None) -> None:
         if text is None:
@@ -805,147 +610,35 @@ class ColorMemoryGame:
             size = max(16, int(base_size - (length - 6) * 2.0))
         self.word_label.configure(font=ctk.CTkFont("Helvetica", size, "bold"), wraplength=540)
 
-    def _fade_word_container(self, target_color: str, duration: int = 220, steps: int = 8) -> None:
-        self._cancel_word_fade()
-        start_rgb = hex_to_rgb(CARD_BG)
-        end_rgb = hex_to_rgb(target_color)
-
-        def fade(step: int = 0) -> None:
-            t = min(1.0, step / steps)
-            blended = tuple(
-                int(start_rgb[i] + (end_rgb[i] - start_rgb[i]) * t) for i in range(3)
-            )
-            hex_color = rgb_to_hex(blended)
-            self.word_container.configure(fg_color=hex_color)
-            self.word_label.configure(fg_color=hex_color)
-            self.word_container._last_word_bg = hex_color
-            if step < steps:
-                self.word_fade_id = self.root.after(
-                    int(duration / steps),
-                    lambda: fade(step + 1),
-                )
-            else:
-                self.word_fade_id = None
-
-        fade()
-
-    def _cancel_word_fade(self) -> None:
-        if self.word_fade_id is not None:
-            self.root.after_cancel(self.word_fade_id)
-            self.word_fade_id = None
-
-    def _animate_background(self, interval: int = 60) -> None:
-        self.bg_anim_theta = (self.bg_anim_theta + 0.02) % (2 * math.pi)
-        mix = (math.sin(self.bg_anim_theta) + 1) / 2
-        color = blend_hex_colors(self.bg_palette[0], self.bg_palette[1], mix)
-
+    def _apply_background_color(self, color: str) -> None:
         self.root.configure(fg_color=color)
         self.body_frame.configure(fg_color=color)
         self.controls_frame.configure(fg_color=color)
-        self.entry_frame.configure(fg_color=color)
+        self.selection_frame.configure(fg_color=color)
         self.feedback_label.configure(fg_color=color)
-        self.entry_hint_label.configure(fg_color=color)
+        self.selection_hint_label.configure(fg_color=color)
+        self.selection_status_label.configure(fg_color=color)
         self.authors_label.configure(fg_color=color)
-        self.entry.configure(fg_color=ENTRY_BG, text_color=ENTRY_TEXT)
-        self.root.after(interval, self._animate_background)
 
     # ------------------------------------------------------------------#
     # Persistence & utilities
     # ------------------------------------------------------------------#
 
-    def _play_sound(self, sound: str) -> None:
-        system = platform.system()
-
-        if system == "Windows":
-            def _windows() -> None:
-                try:
-                    import winsound
-
-                    alias = winsound.MB_ICONASTERISK if sound == "success" else winsound.MB_ICONHAND
-                    winsound.MessageBeep(alias)
-                except Exception:
-                    try:
-                        import winsound
-
-                        frequency = 880 if sound == "success" else 440
-                        winsound.Beep(frequency, 150)
-                    except Exception:
-                        pass
-
-            threading.Thread(target=_windows, daemon=True).start()
-        elif system == "Darwin":
-            def _macos() -> None:
-                sound_name = "Glass.aiff" if sound == "success" else "Basso.aiff"
-                path = os.path.join("/System/Library/Sounds", sound_name)
-                try:
-                    subprocess.run(["afplay", path], check=False)
-                except FileNotFoundError:
-                    pass
-
-            threading.Thread(target=_macos, daemon=True).start()
-        else:
-            try:
-                self.root.bell()
-            except Exception:
-                pass
-
-    def _load_highscore(self) -> int:
-        try:
-            with open(self.highscore_path, "r", encoding="utf-8") as file:
-                raw = file.read().strip()
-                if not raw:
-                    return 0
-                try:
-                    return max(0, int(raw))
-                except ValueError:
-                    with suppress(Exception):
-                        import json
-
-                        data = json.loads(raw)
-                        if isinstance(data, dict):
-                            return max(0, int(data.get("score", 0)))
-                        if isinstance(data, int):
-                            return max(0, data)
-                    return 0
-        except OSError:
-            return 0
-
-    def _save_highscore(self, score: int) -> None:
-        try:
-            with open(self.highscore_path, "w", encoding="utf-8") as file:
-                file.write(str(int(score)))
-        except OSError:
-            pass
-        self._update_score_label()
-
     def reset_highscore(self) -> None:
-        self.highscore = 0
-        self._save_highscore(self.highscore)
+        self.engine.reset_highscore()
+        self._update_score_label(0)
         self._show_feedback("Highscore zurückgesetzt.", "#c67b1e")
 
-    @staticmethod
-    def _darker_color(hex_color: str, factor: float = 0.6) -> str:
-        hex_color = hex_color.lstrip("#")
-        try:
-            r = int(hex_color[0:2], 16)
-            g = int(hex_color[2:4], 16)
-            b = int(hex_color[4:6], 16)
-        except ValueError:
-            return "#181f3a"
-
-        r = max(0, min(255, int(r * factor)))
-        g = max(0, min(255, int(g * factor)))
-        b = max(0, min(255, int(b * factor)))
-        return f"#{r:02x}{g:02x}{b:02x}"
-
-    def _music_cleanup(self) -> None:
-        self._stop_music(with_feedback=False)
-        if self.music_thread and self.music_thread.is_alive():
-            self.music_thread.join(timeout=0.2)
-
     def _on_close(self) -> None:
-        self._music_cleanup()
+        if self.music_controller:
+            self.music_controller.cleanup()
         self.root.destroy()
+
+    @staticmethod
+    def _ideal_text_color(hex_color: str) -> str:
+        r, g, b = hex_to_rgb(hex_color)
+        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+        return "#1f1f1f" if luminance > 0.6 else "#ffffff"
 
 
 def main() -> None:
