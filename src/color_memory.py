@@ -93,6 +93,7 @@ class ColorMemoryApp:
         self.page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
         self.page.vertical_alignment = ft.MainAxisAlignment.CENTER
         self.page.window_bgcolor = NEUTRAL_BG
+        self.page.window_full_screen = True
         self.page.on_close = self._on_page_close
 
         menu = await self._build_menu_view()
