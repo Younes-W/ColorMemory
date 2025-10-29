@@ -1,48 +1,64 @@
 # Color Memory
 
-Ein modernes Farbgedächtnis-Spiel mit einer CustomTkinter-Oberfläche. Das Spiel zeigt nacheinander Farbwörter an, die sich in Schrift- und Hintergrundfarbe unterscheiden. Merke dir die Reihenfolge der Wörter und gib sie anschließend korrekt ein, um in die nächste Runde zu gelangen.
+Ein interaktives Farbgedächtnis-Spiel, entwickelt als HCI-Projekt an der Frankfurt University of Applied Sciences. Die App setzt auf [Flet](https://flet.dev) und kombiniert eine responsive Benutzeroberfläche mit Audio-Feedback, adaptivem Schwierigkeitsgrad und detaillierter Auswertung.
 
-## Features
-- Ansprechende UI auf Basis von [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter)
-- Highscore-Verwaltung mit lokaler Speicherung unter `data/highscore.txt`
-- Optionale Hintergrundmusik (`assets/music.wav`)
-- Animierte Rückmeldungen, Timer-Modus und Hotkeys für einen flüssigen Spielfluss
+## Highlights
+
+- Moderne Cross-Plattform-Oberfläche auf Basis von Flet (Material Design Komponenten)
+- Adaptiver Spielablauf mit steigender Sequenzlänge, Timer-Option und Highscore-Verwaltung
+- Visuelles und akustisches Feedback (optional per `playsound` oder macOS `afplay`)
+- Umfangreicher wissenschaftlicher Projektbericht inklusive Literaturverweisen (`HCI_Projektbericht_….docx`)
 
 ## Voraussetzungen
-- Python 3.11 oder höher
-- macOS, Windows oder Linux mit einer installierten Tcl/Tk-Laufzeit (standardmäßig in der regulären Python-Installation enthalten)
 
-## Installation
+- Python 3.11 oder höher
+- Optional: `afplay` (macOS) oder `playsound` zur Musikwiedergabe
+
+## Schnellstart
+
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-.venv\Scripts\activate     # Windows PowerShell
+source .venv/bin/activate        # Linux/macOS
+.venv\Scripts\activate           # Windows PowerShell
 
 pip install -r requirements.txt
-```
-
-## Spiel starten
-```bash
 python src/color_memory.py
 ```
 
-Die Highscore-Datei (`data/highscore.txt`) wird beim ersten Start automatisch erstellt und kann zurückgesetzt werden, indem du im Spiel den Button „Highscore Reset“ verwendest oder die Datei manuell auf `0` setzt.
+Beim ersten Start wird in `data/highscore.txt` automatisch ein Highscore-Datensatz erzeugt. Über den Button „Highscore zurücksetzen“ lässt sich der Wert löschen.
 
-## Musik aktivieren
-Das Spiel versucht, Musik mit `afplay` (macOS) oder der Bibliothek `playsound` abzuspielen. Stelle sicher, dass `assets/music.wav` vorhanden ist. Auf anderen Betriebssystemen wird ein akustisches Signal über die Systemlautsprecher ausgegeben.
+## Entwicklungsnotizen
 
-## App-Build (PyInstaller)
-Ein vorkonfiguriertes PyInstaller-Skript liegt in `abgabe.spec`. Du kannst eine lauffähige `.app` (macOS) bzw. ein ausführbares Paket wie folgt erstellen:
+- Das UI ist vollständig in `src/color_memory.py` implementiert und orchestriert den Spielablauf.
+- Die Spiel-Logik (Sequenzen, Bewertung, Highscore) liegt gekapselt in `src/game.py`.
+- Konfigurationen für Farben, Pfade und UI-Konstanten befinden sich in `src/config.py`.
+- `src/audio.py` kümmert sich um Hintergrundmusik sowie kurze Feedback-Sounds.
+- Hilfsfunktionen wie Pfadbehandlung sind in `src/utils.py` ausgelagert.
+
+### Tests & Linting
+
+Aktuell sind keine automatisierten Tests eingebunden. Für künftige Erweiterungen empfiehlt sich z. B. [`pytest`](https://docs.pytest.org/) für Logik-Tests sowie [`ruff`](https://docs.astral.sh/ruff/) zur Code-Qualität.
+
+## Paketierung (PyInstaller)
+
+Ein beispielhafter Build lässt sich mit PyInstaller erstellen:
+
 ```bash
-pyinstaller --noconfirm abgabe.spec
+pyinstaller --noconfirm --windowed --name EmojiColorMemory src/color_memory.py
 ```
-Das fertige Bundle befindet sich anschließend im Ordner `dist/`.
 
-## Projektstruktur
-```
-assets/          # Statische Ressourcen wie Logo und Musik
-data/            # Persistente Daten (Highscore)
-src/             # Python-Quellcode
-abgabe.spec      # PyInstaller-Konfiguration für den App-Build
-requirements.txt # Python-Abhängigkeiten
-```
+Das Ergebnis landet im Verzeichnis `dist/` (unter macOS als `.app`, unter Windows/Linux als ausführbares Verzeichnis). Bei Bedarf können eigene `.spec`-Dateien erzeugt werden, um Assets oder Startparameter individuell zu konfigurieren.
+
+## Assets & Daten
+
+- `assets/logo.png` – Logo für Hauptmenü und Spielansicht
+- `assets/music.wav` – Hintergrundmusik (optional)
+- `data/highscore.txt` – Persistenter Highscore (JSON-basiert)
+
+## Dokumentation
+
+Der wissenschaftliche Bericht (`HCI_Projektbericht_FrankfurtUAS_ColorMemoryGame.docx`) dokumentiert Konzept, Implementierung, Evaluation sowie theoretische Grundlagen mit Literaturangaben. Das Vorlesungsskript von Prof. Deegener wird darin als Quelle referenziert, befindet sich aus urheberrechtlichen Gründen jedoch nicht im Repository.
+
+## Lizenz
+
+Bitte vor Veröffentlichung eine passende Lizenz ergänzen (z. B. MIT oder CC BY-SA je nach gewünschter Weitergabe).

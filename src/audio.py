@@ -22,13 +22,13 @@ class MusicController:
     def __init__(
         self,
         *,
-        root,
         music_file: str,
         notify: Callable[[str, str], None],
+        invoke_later: Optional[Callable[[Callable[[], None]], None]] = None,
     ) -> None:
-        self.root = root
         self.music_file = music_file
         self.notify = notify
+        self.invoke_later = invoke_later or (lambda func: func())
         self.music_thread: Optional[threading.Thread] = None
         self.music_stop_event = threading.Event()
         self.music_mode: Optional[str] = None
@@ -77,7 +77,7 @@ class MusicController:
                 pass
         self.music_mode = None
         if with_feedback:
-            self.notify("Musik gestoppt.", "#4b58c2")
+            self.notify("", "#4b58c2")
 
     def cleanup(self) -> None:
         self.stop(with_feedback=False)
@@ -131,7 +131,7 @@ class MusicController:
 
             self.music_process = None
 
-        self.root.after(0, lambda: self._finalize_music_loop(error_message))
+        self.invoke_later(lambda: self._finalize_music_loop(error_message))
 
     def _finalize_music_loop(self, error_message: Optional[str]) -> None:
         self.music_thread = None
@@ -176,9 +176,16 @@ def play_feedback_sound(sound: str, *, bell: Optional[Callable[[], None]] = None
 
         threading.Thread(target=_macos, daemon=True).start()
     else:
-        if bell is None:
-            return
-        try:
-            bell()
-        except Exception:
-            pass
+        if bell is not None:
+            try:
+                bell()
+            except Exception:
+                pass
+        else:
+            try:
+                import sys
+
+                sys.stdout.write("\a")
+                sys.stdout.flush()
+            except Exception:
+                pass

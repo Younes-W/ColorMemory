@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import random
 from contextlib import suppress
@@ -30,7 +31,9 @@ class ColorMemoryEngine:
         self.round: int = 0
 
         self._ensure_highscore_file()
-        self.highscore: int = self._load_highscore()
+        highscore, player = self._load_highscore()
+        self.highscore: int = highscore
+        self.best_player: str = player or "Unbekannt"
 
     # ------------------------------------------------------------------#
     # Game lifecycle
@@ -68,18 +71,23 @@ class ColorMemoryEngine:
         guess_norm = [word.casefold() for word in guessed_words]
         return guess_norm == expected
 
-    def register_failure(self) -> tuple[int, bool, str]:
+    def register_failure(self, player_name: str | None = None) -> tuple[int, bool, str]:
         score = max(0, self.round - 1)
         new_highscore = score > self.highscore
         if new_highscore:
             self.highscore = score
+            if player_name:
+                self.best_player = player_name
             self._save_highscore(score)
         solution = " → ".join(self.sequence)
         return score, new_highscore, solution
 
-    def register_success(self) -> None:
+    def register_success(self, player_name: str | None = None) -> None:
         if self.round > self.highscore:
             self.highscore = self.round
+            if player_name:
+                self.best_player = player_name
+            self._save_highscore(self.highscore)
 
     # ------------------------------------------------------------------#
     # Highscore persistence
@@ -87,6 +95,7 @@ class ColorMemoryEngine:
 
     def reset_highscore(self) -> None:
         self.highscore = 0
+        self.best_player = "Unbekannt"
         self._save_highscore(self.highscore)
 
     def _ensure_highscore_file(self) -> None:
@@ -95,30 +104,31 @@ class ColorMemoryEngine:
                 with open(self.highscore_path, "w", encoding="utf-8") as file:
                     file.write("0")
 
-    def _load_highscore(self) -> int:
+    def _load_highscore(self) -> tuple[int, str]:
         try:
             with open(self.highscore_path, "r", encoding="utf-8") as file:
                 raw = file.read().strip()
                 if not raw:
-                    return 0
+                    return 0, "Unbekannt"
                 try:
-                    return max(0, int(raw))
+                    return max(0, int(raw)), "Unbekannt"
                 except ValueError:
                     with suppress(Exception):
-                        import json
-
                         data = json.loads(raw)
                         if isinstance(data, dict):
-                            return max(0, int(data.get("score", 0)))
+                            score = max(0, int(data.get("score", 0)))
+                            player = str(data.get("player", "Unbekannt"))
+                            return score, player
                         if isinstance(data, int):
-                            return max(0, data)
-                    return 0
+                            return max(0, data), "Unbekannt"
+                    return 0, "Unbekannt"
         except OSError:
-            return 0
+            return 0, "Unbekannt"
 
     def _save_highscore(self, score: int) -> None:
+        payload = {"score": int(score), "player": self.best_player}
         try:
             with open(self.highscore_path, "w", encoding="utf-8") as file:
-                file.write(str(int(score)))
+                file.write(json.dumps(payload))
         except OSError:
             pass
